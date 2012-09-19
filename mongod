@@ -1,0 +1,129 @@
+#! /bin/sh
+
+# A mongod init script that supports multiple instances on the same host,
+# and handles NUMA placement policy where applicable.
+
+# chkconfig: 2345 30 80
+# description: MongoDB is a document-oriented DBMS.
+# processname: mongod
+
+# For the purposes of this script, an instance is identified by a directory
+# under $INSTANCE_ROOT that contains a file $CNF_FILE.  
+#
+# By default, the script will act against all known instances.  Actions can
+# be optionally targetted.
+#
+# This script does not bother with lock files under /var/lock/subsys.
+
+source /etc/init.d/functions
+
+MONGOD=/usr/bin/mongod
+
+# instance
+INSTANCE_ROOT=/etc/mongod
+CNF_FILE=mongod.cnf
+
+# based on config file (dbpath)
+PID_FILE=
+
+# numa
+NUMACTL=
+NUMACTL_OPT="--interleave=all"
+# check if numactl exists, the host is numa-enabled
+if `numactl -s >/dev/null 2>/dev/null`; then NUMACTL="numactl $NUMACTL_OPT"; fi
+
+# other
+DAEMON_USER="mongodb"
+DAEMON_OPT="--config"
+
+function set_pidfile() {
+	# parse mongod.cnf for dbpath
+
+	local instance=$1
+	PID_FILE=`awk -F= '/^dbpath/ { gsub(/[[:space:]]*/,"",$2); print $2 }' $INSTANCE_ROOT/$instance/$CNF_FILE`/mongod.lock
+	# fall back on mongod's default dbpath
+	if [ -z "$PID_FILE" ]; then PID_FILE=/db/data; fi
+}
+
+function m_restart() {
+  for instance in "$@"
+  do
+    m_stop $instance
+    m_start $instance
+  done
+}
+
+function m_start() {
+  for instance in "$@"
+  do
+    echo -n "Starting mongod ($instance):"
+    set_pidfile "$instance"
+    daemon --user "$DAEMON_USER" $NUMACTL $MONGOD $DAEMON_OPT $INSTANCE_ROOT/$instance/$CNF_FILE
+  done
+}
+
+function m_status() {
+  for instance in "$@"
+  do
+    echo -n "$instance: "
+    set_pidfile "$instance"
+    status -p "$PID_FILE" $MONGOD
+    r=$?
+  done
+}
+
+function m_stop() {
+  for instance in "$@"
+  do
+    echo -n "Stopping mongod ($instance):"
+    set_pidfile "$instance"
+    killproc -p "$PID_FILE" -d 30 $MONGOD
+    r=$?
+    echo
+  done
+}
+
+r=0
+
+# array of instances
+mongodb=()
+
+# if only an action
+if [ $# -eq 1 ]; then
+  instance_list=($INSTANCE_ROOT/*)
+  for instance_dir in "${instance_list[@]}"
+  do
+    if [ -f $instance_dir/$CNF_FILE ]; then
+      instance_name=`basename $instance_dir`
+      mongodb+=("$instance_name")
+    fi
+  done
+# if action and instance
+elif [ $# -eq 2 -a -f $INSTANCE_ROOT/$2/$CNF_FILE ]; then
+  mongodb=($2)
+else
+  r=1
+fi
+
+case "$1" in
+  restart)
+    m_restart "${mongodb[@]}"
+    ;;
+  start)
+    m_start "${mongodb[@]}"
+    ;;
+  status)
+    m_status "${mongodb[@]}"
+    ;;
+  stop)
+    m_stop "${mongodb[@]}"
+    ;;
+  *)
+    echo "Usage: `basename $0` {restart|start|status|stop} [instance]"
+    r=1
+    ;;
+esac
+
+# currently returns the last read return code
+#TODO return highest return code if acting against multiple instances
+exit $r
