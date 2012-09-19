@@ -77,7 +77,7 @@ function m_stop() {
   do
     echo -n "Stopping mongod ($instance):"
     set_pidfile "$instance"
-    killproc -p "$PID_FILE" -d 30 $MONGOD
+    killproc -p "$PID_FILE" -d 20 $MONGOD
     r=$?
     echo
   done
