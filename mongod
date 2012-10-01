@@ -18,6 +18,7 @@
 source /etc/init.d/functions
 
 MONGOD=/usr/bin/mongod
+MONGOD_OPT="--config"
 
 # instance
 INSTANCE_ROOT=/etc/mongod
@@ -34,15 +35,14 @@ if `numactl -s >/dev/null 2>/dev/null`; then NUMACTL="numactl $NUMACTL_OPT"; fi
 
 # other
 DAEMON_USER="mongodb"
-DAEMON_OPT="--config"
 
 function set_pidfile() {
-	# parse mongod.cnf for dbpath
+  # parse mongod.cnf for dbpath
 
-	local instance=$1
-	PID_FILE=`awk -F= '/^dbpath/ { gsub(/[[:space:]]*/,"",$2); print $2 }' $INSTANCE_ROOT/$instance/$CNF_FILE`/mongod.lock
-	# fall back on mongod's default dbpath
-	if [ -z "$PID_FILE" ]; then PID_FILE=/db/data; fi
+  local instance=$1
+  PID_FILE=`awk -F= '/^dbpath/ { gsub(/[[:space:]]*/,"",$2); print $2 }' $INSTANCE_ROOT/$instance/$CNF_FILE`/mongod.lock
+  # fall back on mongod's default dbpath
+  if [ -z "$PID_FILE" ]; then PID_FILE=/db/data; fi
 }
 
 function m_restart() {
@@ -58,7 +58,13 @@ function m_start() {
   do
     echo -n "Starting mongod ($instance):"
     set_pidfile "$instance"
-    daemon --user "$DAEMON_USER" $NUMACTL $MONGOD $DAEMON_OPT $INSTANCE_ROOT/$instance/$CNF_FILE
+    daemon --user "$DAEMON_USER" $NUMACTL $MONGOD $MONGOD_OPT $INSTANCE_ROOT/$instance/$CNF_FILE
+
+    # test locally; update master return value
+    local mr=$?
+    if [ "$mr" -gt "$r" ]; then
+      r=$mr
+    fi
   done
 }
 
@@ -68,7 +74,12 @@ function m_status() {
     echo -n "$instance: "
     set_pidfile "$instance"
     status -p "$PID_FILE" $MONGOD
-    r=$?
+
+    # test locally; update master return value
+    local mr=$?
+    if [ "$mr" -gt "$r" ]; then
+      r=$mr
+    fi
   done
 }
 
@@ -78,8 +89,12 @@ function m_stop() {
     echo -n "Stopping mongod ($instance):"
     set_pidfile "$instance"
     killproc -p "$PID_FILE" -d 20 $MONGOD
-    r=$?
-    echo
+
+    # test locally; update master return value
+    local mr=$?
+    if [ "$mr" -gt "$r" ]; then
+      r=$mr
+    fi
   done
 }
 
@@ -125,5 +140,4 @@ case "$1" in
 esac
 
 # currently returns the last read return code
-#TODO return highest return code if acting against multiple instances
 exit $r
